@@ -1,0 +1,6 @@
+在s3credentials.properties和sync.java文件中修改accessKey和secretKey，
+将程序打包为jar包，命名为sync.jar，
+然后输入命令行：
+java -jar sync.jar <directory> <bucketName> <path-to-s3credentials.properties> preview
+将会显示需要添加到桶中或者删除的文件，
+然后再次输入上面的命令并去掉preview就可以执行对应的操作。
