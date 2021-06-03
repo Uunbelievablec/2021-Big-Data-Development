@@ -1,0 +1,106 @@
+本程序实现的功能：将本地文件夹内容和S3 Browser的bucket内容同步
+实现思路：
+#1 同步具体表现为检查本地文件列表和S3 Browser桶中的文件列表，若本地文件列表中有S3中没有的文件，则将其上传到S3；
+   若本地文件列表中的文件被修改过，则同样将其上传并覆盖S3中的原文件；
+   若S3中有本地文件列表没有的文件，则将其删除。同步方法的代码如下：
+   
+   public static void syncing(AmazonS3 client, String bucketName, File root) {
+		
+		System.out.println("Syncing " + root + " to " + bucketName);
+		
+		log.info("Getting local file list...");
+		Map<String, File> fileMap = new HashMap<String, File>();
+		Map<String, String> localFiles = getLocalFiles(root, fileMap);
+		
+		log.info("Loading object listing...");
+		Map<String, String> serverFiles = getServerFiles(client, bucketName);
+		
+		for (Map.Entry<String, String> entry : localFiles.entrySet()) {
+			if (serverFiles.containsKey(entry.getKey())
+					&& serverFiles.get(entry.getKey()).equals(entry.getValue())) {
+				// file is up to date
+			} else {
+				System.out.print(
+						(serverFiles.containsKey(entry.getKey()) ? "M" : "A")
+						+ " " + entry.getKey());
+				if (!previewMode) upload(client, bucketName, entry.getKey(), fileMap.get(entry.getKey()), accessKey, secretKey, root.getPath());
+				System.out.println();
+			}
+		}
+		
+		for (Map.Entry<String, String> entry : serverFiles.entrySet()) {
+			if (!localFiles.containsKey(entry.getKey())) {
+				System.out.print("D " + entry.getKey());
+				if (!previewMode) client.deleteObject(bucketName, entry.getKey());
+				System.out.println();
+			}
+		}
+
+	}
+  
+#2 需要具体实现上传的功能，并且当文件大小超过20M时使用分片上传。
+   则首先需要实现判断文件大小的方法：
+   
+   public static boolean checkFileSize(File file, int size, String unit) {
+		long len = file.length();
+		double fileSize = 0;
+		if ("B".equals(unit.toUpperCase())) {
+			fileSize = (double) len;
+		} else if ("K".equals(unit.toUpperCase())) {
+			fileSize = (double) len / 1024;
+		} else if ("M".equals(unit.toUpperCase())) {
+			fileSize = (double) len / 1048576;
+		} else if ("G".equals(unit.toUpperCase())) {
+			fileSize = (double) len / 1073741824;
+		}
+		
+		if (fileSize > size) {
+			return false;
+		}
+		return true;
+	}
+  
+  新建一个类用于具体实现分片上传功能，具体见MultipartUpload.java
+  
+  最终上传方法如下：
+  
+  public static void upload(AmazonS3 client, String bucketName, String key, File file, String accessKey, String secretKey, String filePath) {
+		PutObjectRequest request = new PutObjectRequest(bucketName, key, file);
+		ObjectMetadata metadata = new ObjectMetadata();
+		if (file.getName().endsWith(".html")) {
+			metadata.setContentType("text/html; charset=utf-8");
+			System.out.print(" [html]");
+		}
+		
+		if (checkFileSize(file, 20, "M")) {
+			request.setMetadata(metadata); 
+			client.putObject(request);
+			System.out.println("Upload Done!");
+		} else {
+			MultipartUpload mpul = new MultipartUpload(bucketName, accessKey, secretKey, filePath);
+			mpul.upload();
+		}
+		
+	}
+  
+  需要再具体实现获取S3 Browser和本地文件夹中文件列表的方法。
+  
+#3 最后在main函数中实现如下：
+
+   public static void main(String[] args) throws FileNotFoundException,
+			IllegalArgumentException, IOException {
+
+		log = LogFactory.getLog(sync.class);
+		AWSCredentials credentials = new PropertiesCredentials(new File(args[2]));
+		@SuppressWarnings("deprecation")
+		AmazonS3 client = new AmazonS3Client(credentials);
+
+		if (str.length > 3 && args[3].equals("preview")) previewMode = true;
+		syncing(client, args[1], new File(args[0]));
+
+		System.out.println("All done.");
+		
+	}
+  
+  通过命令行传入桶名和文件夹路径作为参数实现。
+   
